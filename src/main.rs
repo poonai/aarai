@@ -21,7 +21,7 @@ use libc::uint32_t;
 
 use std::fs::File;
 
-use std::path::Path;
+use std::path::PathBuf;
 
 mod container;
 mod helper;
@@ -32,8 +32,10 @@ fn parse<T>(data: &[u8]) -> T {
 
 fn do_main() -> Result<(), Error> {
     let mut prog = String::new();
-    let path = Path::new("/home/schoolboy/aarai/src/bpf.c");
-    let mut f = File::open(&path)?;
+    let relative_path = PathBuf::from("src/bpf.c");
+    let mut absolute_path = try!(std::env::current_dir());
+    absolute_path.push(relative_path);
+    let mut f = File::open(&absolute_path)?;
     match f.read_to_string(&mut prog) {
         Err(_x) => return Err(format_err!("unable to read file")),
         Ok(_f) => {}
