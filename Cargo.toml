@@ -4,12 +4,13 @@ version = "0.1.0"
 authors = ["balaji <balaji@avinetworks.com>"]
 
 [dependencies]
-bcc = {path="../rust-bcc-2"}
+bcc = {path="./rust-bcc-2"}
 shiplift = "0.3"
-procinfo = {path="../procinfo-rs"}
+procinfo = {path="./procinfo-rs"}
 failure = "0.1.1"
 tera = "0.11.10"
 handlebars = "1.0.0"
 serde_json = "1.0.24"
 prettytable-rs = "^0.6"
 libc = "0.2.43"
+termion = "1.5.1"

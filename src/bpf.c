@@ -1,32 +1,28 @@
-#include <uapi/linux/ptrace.h>
 #include <linux/blkdev.h>
-#include <linux/socket.h>
-
-// vakiyam struct it'll be very useful for parsing string
-struct vakiyam
-{
-    char data[100];
-};
 
 struct sched_data
 {
     u64 rss;
-    unsigned long long runtime;
-    unsigned long long start_time;
+    u32 index;
+    u32 pid;
+};
+
+struct exit_data
+{
+    u32 pid;
+    u32 index;
 };
 
 //new definitions
 BPF_HASH(state_ppid, u32, u32);
 BPF_HASH(state_pid, u32, u32);
 BPF_HASH(state_sched, u32, struct sched_data);
-BPF_HASH(state_fd);
 BPF_PERF_OUTPUT(state_sched_event);
-BPF_PERF_OUTPUT(state_net_io);
-BPF_PERF_OUTPUT(state_disk_io);
+BPF_PERF_OUTPUT(exit_event);
 
 // helpers man
-static __always_inline unsigned long bpf_get_mm_counter(struct mm_struct *mm,
-                                                        int member)
+
+static __always_inline unsigned long bpf_get_mm_counter(struct mm_struct *mm, int member)
 {
     long val;
 
@@ -65,11 +61,99 @@ int sched_tracepoint(struct tracepoint__sched__sched_stat_runtime *args)
     mm = NULL;
     bpf_probe_read(&mm, sizeof(mm), &task->mm);
     u64 total_rss = bpf_get_mm_rss(mm) << (PAGE_SHIFT - 10);
+    u32 *index = state_ppid.lookup(&pid);
+    if (index == 0)
+    {
+        return 0;
+    }
     struct sched_data temp = {};
+    temp.pid = pid;
+    temp.index = *index;
     temp.rss = total_rss;
-    temp.runtime = args->runtime + data->runtime;
-    temp.start_time = data->start_time;
     state_sched.update(&pid, &temp);
-    state_sched_event.perf_submit(args, &pid, sizeof(pid));
+    state_sched_event.perf_submit(args, &temp, sizeof(temp));
+    return 0;
+}
+
+int clone_tracepoint(struct tracepoint__syscalls__sys_exit_clone *args)
+{
+    struct task_struct *task;
+    task = (struct task_struct *)bpf_get_current_task();
+    u32 tgid = task->tgid;
+    u32 pid = bpf_get_current_pid_tgid();
+    if (tgid == pid)
+    {
+        tgid = task->parent->tgid;
+    }
+    u32 *data = state_pid.lookup(&tgid);
+    if (data == 0)
+    {
+        return 0;
+    }
+    u32 data_clone = *data;
+    u32 *index = state_ppid.lookup(&data_clone);
+    if (index == 0)
+    {
+        return 0;
+    }
+
+    state_pid.lookup_or_init(&pid, &tgid);
+    struct sched_data temp = {};
+    temp.index = *index;
+    temp.pid = pid;
+    temp.rss = 0;
+    u32 index_clone = *index;
+    state_ppid.lookup_or_init(&pid, &index_clone);
+    state_sched.lookup_or_init(&pid, &temp);
+    state_sched_event.perf_submit(args, &temp, sizeof(temp));
+    return 0;
+}
+
+// don't do anything, revist here after the mem calculation are done properly
+int exit_tracepoint(struct tracepoint__syscalls__sys_enter_exit *args)
+{
+
+    u32 pid = bpf_get_current_pid_tgid();
+    u32 *data = state_pid.lookup(&pid);
+    if (data == 0)
+    {
+        return 0;
+    }
+    u32 *index = state_ppid.lookup(&pid);
+    if (index == 0)
+    {
+        return 0;
+    }
+
+    struct exit_data event = {};
+    u32 temp_index = *index;
+    event.index = temp_index;
+    event.pid = pid;
+    exit_event.perf_submit(args, &event, sizeof(event));
+    state_pid.delete(&pid);
+    state_ppid.delete(&pid);
+    state_sched.delete(&pid);
+    return 0;
+}
+int exit_group_tracepoint(struct tracepoint__syscalls__sys_enter_exit_group *args)
+{
+    u32 pid = bpf_get_current_pid_tgid();
+    u32 *data = state_pid.lookup(&pid);
+    if (data != 0)
+    {
+        return 0;
+    }
+    u32 *index = state_ppid.lookup(&pid);
+    if (index == 0)
+    {
+        return 0;
+    }
+    state_pid.delete(&pid);
+    state_ppid.delete(&pid);
+    state_sched.delete(&pid);
+    struct exit_data event = {};
+    event.index = *index;
+    event.pid = pid;
+    exit_event.perf_submit(args, &event, sizeof(event));
     return 0;
 }
